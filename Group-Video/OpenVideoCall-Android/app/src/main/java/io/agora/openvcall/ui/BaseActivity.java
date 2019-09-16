@@ -6,7 +6,6 @@ import android.content.res.TypedArray;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.Looper;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
@@ -14,12 +13,9 @@ import android.support.v7.app.AppCompatActivity;
 import android.util.DisplayMetrics;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
-import android.widget.EditText;
 import android.widget.Toast;
 import io.agora.openvcall.AGApplication;
-import io.agora.openvcall.BuildConfig;
 import io.agora.openvcall.model.*;
-import io.agora.propeller.Constant;
 import io.agora.rtc.RtcEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,20 +28,13 @@ public abstract class BaseActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        initUIAndEvent();
+    }
 
-        final View layout = findViewById(Window.ID_ANDROID_CONTENT);
-        ViewTreeObserver vto = layout.getViewTreeObserver();
-        vto.addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
-            @Override
-            public void onGlobalLayout() {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-                    layout.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                } else {
-                    layout.getViewTreeObserver().removeGlobalOnLayoutListener(this);
-                }
-                initUIAndEvent();
-            }
-        });
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        deInitUIAndEvent();
     }
 
     protected abstract void initUIAndEvent();
@@ -55,20 +44,9 @@ public abstract class BaseActivity extends AppCompatActivity {
     @Override
     protected void onPostCreate(Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
-
-        new Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (isFinishing()) {
-                    return;
-                }
-
-                boolean checkPermissionResult = checkSelfPermissions();
-
-                if ((Build.VERSION.SDK_INT < Build.VERSION_CODES.M)) {
-                    // so far we do not use OnRequestPermissionsResultCallback
-                }
-            }
+        new Handler().postDelayed(() -> {
+            if (isFinishing()) return;
+            checkSelfPermissions();
         }, 500);
     }
 
@@ -78,54 +56,44 @@ public abstract class BaseActivity extends AppCompatActivity {
                 checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, ConstantApp.PERMISSION_REQ_ID_WRITE_EXTERNAL_STORAGE);
     }
 
-    @Override
-    protected void onDestroy() {
-        deInitUIAndEvent();
-        super.onDestroy();
-    }
-
-    public final void closeIME(View v) {
-        InputMethodManager mgr = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-        mgr.hideSoftInputFromWindow(v.getWindowToken(), 0); // 0 force close IME
-        v.clearFocus();
-    }
-
-    public final void closeIMEWithoutFocus(View v) {
-        InputMethodManager mgr = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-        mgr.hideSoftInputFromWindow(v.getWindowToken(), 0); // 0 force close IME
-    }
-
-    public void openIME(final EditText v) {
-        final boolean focus = v.requestFocus();
-        if (v.hasFocus()) {
-            final Handler handler = new Handler(Looper.getMainLooper());
-            handler.post(new Runnable() {
-                @Override
-                public void run() {
-                    InputMethodManager mgr = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                    boolean result = mgr.showSoftInput(v, InputMethodManager.SHOW_FORCED);
-                    log.debug("openIME " + focus + " " + result);
-                }
-            });
-        }
-    }
-
     public boolean checkSelfPermission(String permission, int requestCode) {
         log.debug("checkSelfPermission " + permission + " " + requestCode);
-        if (ContextCompat.checkSelfPermission(this,
-                permission)
-                != PackageManager.PERMISSION_GRANTED) {
-
+        if (ContextCompat.checkSelfPermission(this, permission) !=
+                PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
-                    new String[]{permission},
-                    requestCode);
+                    new String[]{permission}, requestCode);
             return false;
         }
-
-        if (Manifest.permission.CAMERA.equals(permission)) {
-            // ((AGApplication) getApplication()).initWorker();
-        }
         return true;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String permissions[], @NonNull int[] grantResults) {
+        log.debug("onRequestPermissionsResult " + requestCode + " " + Arrays.toString(permissions) + " " + Arrays.toString(grantResults));
+        switch (requestCode) {
+            case ConstantApp.PERMISSION_REQ_ID_RECORD_AUDIO: {
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    checkSelfPermission(Manifest.permission.CAMERA, ConstantApp.PERMISSION_REQ_ID_CAMERA);
+                } else {
+                    finish();
+                }
+                break;
+            }
+            case ConstantApp.PERMISSION_REQ_ID_CAMERA: {
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, ConstantApp.PERMISSION_REQ_ID_WRITE_EXTERNAL_STORAGE);
+                } else {
+                    finish();
+                }
+                break;
+            }
+            case ConstantApp.PERMISSION_REQ_ID_WRITE_EXTERNAL_STORAGE: {
+                if (grantResults.length <= 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                    finish();
+                }
+                break;
+            }
+        }
     }
 
     protected AGApplication application() {
@@ -148,45 +116,15 @@ public abstract class BaseActivity extends AppCompatActivity {
         return worker().eventHandler();
     }
 
-    public final void showLongToast(final String msg) {
-        runOnUiThread(() -> {
-            Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show();
-        });
+    protected void closeIME(View v) {
+        InputMethodManager mgr = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        mgr.hideSoftInputFromWindow(v.getWindowToken(), InputMethodManager.HIDE_IMPLICIT_ONLY);
+        v.clearFocus();
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           @NonNull String permissions[], @NonNull int[] grantResults) {
-        log.debug("onRequestPermissionsResult " + requestCode + " " + Arrays.toString(permissions) + " " + Arrays.toString(grantResults));
-        switch (requestCode) {
-            case ConstantApp.PERMISSION_REQ_ID_RECORD_AUDIO: {
-                if (grantResults.length > 0
-                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    checkSelfPermission(Manifest.permission.CAMERA, ConstantApp.PERMISSION_REQ_ID_CAMERA);
-                } else {
-                    finish();
-                }
-                break;
-            }
-            case ConstantApp.PERMISSION_REQ_ID_CAMERA: {
-                if (grantResults.length > 0
-                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, ConstantApp.PERMISSION_REQ_ID_WRITE_EXTERNAL_STORAGE);
-                    //((AGApplication) getApplication()).initWorker();
-                } else {
-                    finish();
-                }
-                break;
-            }
-            case ConstantApp.PERMISSION_REQ_ID_WRITE_EXTERNAL_STORAGE: {
-                if (grantResults.length > 0
-                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                } else {
-                    finish();
-                }
-                break;
-            }
-        }
+    protected void showLongToast(final String msg) {
+        runOnUiThread(() -> {
+            Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show(); });
     }
 
     protected int virtualKeyHeight() {
@@ -237,9 +175,9 @@ public abstract class BaseActivity extends AppCompatActivity {
     }
 
     protected final int getStatusBarHeight() {
-        // status bar height
         int statusBarHeight = 0;
-        int resourceId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        int resourceId = getResources().getIdentifier(
+                "status_bar_height", "dimen", "android");
         if (resourceId > 0) {
             statusBarHeight = getResources().getDimensionPixelSize(resourceId);
         }
@@ -252,27 +190,14 @@ public abstract class BaseActivity extends AppCompatActivity {
     }
 
     protected final int getActionBarHeight() {
-        // action bar height
-        int actionBarHeight = 0;
         final TypedArray styledAttributes = this.getTheme().obtainStyledAttributes(
-                new int[]{android.R.attr.actionBarSize}
-        );
-        actionBarHeight = (int) styledAttributes.getDimension(0, 0);
+                new int[]{ android.R.attr.actionBarSize });
+        int actionBarHeight = (int) styledAttributes.getDimension(0, 0);
         styledAttributes.recycle();
-
         if (actionBarHeight == 0) {
             log.error("Can not get height of action bar");
         }
 
         return actionBarHeight;
     }
-
-    protected void initVersionInfo() {
-        String version = "V " + BuildConfig.VERSION_NAME + "(Build: " + BuildConfig.VERSION_CODE
-                + ", " + ConstantApp.APP_BUILD_DATE + ", SDK: " + Constant.MEDIA_SDK_VERSION + ")";
-//        TextView textVersion = (TextView) findViewById(R.id.app_version);
-//        textVersion.setText(version);
-    }
-
-
 }
